@@ -33,20 +33,30 @@ export const MessagesPage: React.FC = () => {
 
         if (matchesError) throw matchesError;
 
-        const conversationsList: Conversation[] = [];
+        const otherUserIds = (matchesData || [])
+          .map((match) => match.users.find((id: string) => id !== user.id))
+          .filter((id): id is string => Boolean(id));
 
-        for (const match of matchesData || []) {
+        if (otherUserIds.length === 0) {
+          setConversations([]);
+          return;
+        }
+
+        const { data: usersData, error: usersError } = await supabase
+          .from('users')
+          .select('*')
+          .in('id', otherUserIds);
+
+        if (usersError) throw usersError;
+
+        const usersById = new Map((usersData || []).map((profile) => [profile.id, profile]));
+
+        const conversationsResolved = await Promise.all((matchesData || []).map(async (match): Promise<Conversation | null> => {
           const otherUserId = match.users.find((id: string) => id !== user.id);
-          if (!otherUserId) continue;
+          if (!otherUserId) return null;
 
-          // Fetch other user details
-          const { data: userData } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', otherUserId)
-            .single();
-
-          if (!userData) continue;
+          const otherUser = usersById.get(otherUserId);
+          if (!otherUser) return null;
 
           // Fetch last message
           const { data: messagesData } = await supabase
@@ -64,13 +74,17 @@ export const MessagesPage: React.FC = () => {
             .neq('sender', user.id)
             .is('read_at', null);
 
-          conversationsList.push({
+          return {
             match,
-            otherUser: userData,
-            lastMessage: messagesData?.[0],
+            otherUser,
+            lastMessage: messagesData?.[0] ?? undefined,
             unreadCount: unreadCount || 0,
-          });
-        }
+          };
+        }));
+
+        const conversationsList: Conversation[] = conversationsResolved.filter(
+          (conversation): conversation is Conversation => conversation !== null,
+        );
 
         // Sort by last message date
         conversationsList.sort((a, b) => {
