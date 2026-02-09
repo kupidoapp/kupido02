@@ -29,22 +29,35 @@ export const MatchesPage: React.FC = () => {
 
         if (error) throw error;
 
-        // Fetch user details for each match
-        const matchesWithUsers: MatchWithUser[] = [];
-        for (const match of matchesData || []) {
-          const otherUserId = match.users.find((id: string) => id !== user.id);
-          if (otherUserId) {
-            const { data: userData } = await supabase
-              .from('users')
-              .select('*')
-              .eq('id', otherUserId)
-              .single();
+        const otherUserIds = (matchesData || [])
+          .map((match) => match.users.find((id: string) => id !== user.id))
+          .filter((id): id is string => Boolean(id));
 
-            if (userData) {
-              matchesWithUsers.push({ ...match, otherUser: userData });
-            }
-          }
+        if (otherUserIds.length === 0) {
+          setMatches([]);
+          return;
         }
+
+        const { data: usersData, error: usersError } = await supabase
+          .from('users')
+          .select('*')
+          .in('id', otherUserIds);
+
+        if (usersError) throw usersError;
+
+        const usersById = new Map((usersData || []).map((profile) => [profile.id, profile]));
+
+        const matchesWithUsers: MatchWithUser[] = (matchesData || [])
+          .map((match) => {
+            const otherUserId = match.users.find((id: string) => id !== user.id);
+            if (!otherUserId) return null;
+
+            const otherUser = usersById.get(otherUserId);
+            if (!otherUser) return null;
+
+            return { ...match, otherUser };
+          })
+          .filter((item): item is MatchWithUser => item !== null);
 
         setMatches(matchesWithUsers);
       } catch (error) {
